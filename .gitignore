@@ -1,0 +1,5 @@
+/target
+*.bat
+*.ps1
+.idea/
+.vscode/
