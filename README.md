@@ -11,13 +11,13 @@
 **A universal, cross-platform location simulator written in 100% safe Rust.**  
 *Instantly spoof device coordinates, altitude, accuracy, speed, and heading across Windows, Linux, macOS, Android emulators, iOS simulators, and headless browsers.*
 
-[Features](#-key-features) • [Installation](#-installation) • [Quick Start](#-quick-start-in-10-seconds) • [Usage Guide](#-complete-usage-guide) • [Docs](#-deep-dive-documentation) • [CI/CD Testing](#-automated-testing--cicd)
+[Features](#key-features) • [Installation](#installation) • [Quick Start](#quick-start-in-10-seconds) • [Usage Guide](#complete-usage-guide) • [Docs](#deep-dive-documentation) • [CI/CD Testing](#automated-testing--cicd)
 
 </div>
 
 ---
 
-## 🧭 Why `locsim`?
+## Why `locsim`?
 
 Testing location-dependent applications is notoriously fragmented:
 - **Browsers** require Chrome DevTools Protocol (`Emulation.setGeolocationOverride`) or manual sensor panels.
@@ -31,7 +31,7 @@ Whether you provide a place name (`"Tokyo Station"`), coordinates (`35.6812, 139
 
 ---
 
-## 🏛️ Multi-Layer Architecture
+## Multi-Layer Architecture
 
 ```text
                                ┌──────────────────────────┐
@@ -57,24 +57,24 @@ Whether you provide a place name (`"Tokyo Station"`), coordinates (`35.6812, 139
 
 ---
 
-## ⚡ Key Features
+## Key Features
 
-- 🌍 **Natural Language Geocoding**: Resolve any address or point of interest with OpenStreetMap Nominatim, LocationIQ, Mapbox, OpenCage, or Google Maps.
-- 🔄 **First-Class Reverse Geocoding**: Convert coordinates into human-readable street addresses instantly via `--reverse` / `-r`.
-- 🛰️ **Extended Real-World Telemetry**: Full simulation of **altitude** (meters), horizontal **accuracy** (meters), ground **speed** (m/s), and **heading** (0.0°–360.0° bearing).
-- 📱 **Mobile Emulator Bridges**:
+- **Natural Language Geocoding**: Resolve any address or point of interest with OpenStreetMap Nominatim, LocationIQ, Mapbox, OpenCage, or Google Maps.
+- **First-Class Reverse Geocoding**: Convert coordinates into human-readable street addresses instantly via `--reverse` / `-r`.
+- **Extended Real-World Telemetry**: Full simulation of **altitude** (meters), horizontal **accuracy** (meters), ground **speed** (m/s), and **heading** (0.0°–360.0° bearing).
+- **Mobile Emulator Bridges**:
   - **Android ADB**: Automatically detects running AVDs and dispatches `adb emu geo fix` and `cmd location set-location`. Target individual devices with `--android-device`.
   - **iOS Simulator**: Automatic synchronization via `xcrun simctl location booted set`.
-- 🔖 **Named Location Profiles / Bookmarks**: Save, list, apply, and delete frequently used testing spots (`locsim save home`, `locsim use work`).
-- 🌐 **Reset with IP Geolocation**: Instantly clear all mock states and detect genuine physical location via public IP lookup (`locsim reset`).
-- 💻 **Browser & Automation Exports**: Automatically updates Chrome DevTools Protocol (`cdp_geolocation.json`), GPX 1.1 tracks (`simulated_location.gpx`), and shell environment scripts (`locsim_env.sh` / `locsim_env.ps1`).
-- 🐚 **Shell Auto-Completions**: First-class shell completions for PowerShell, Bash, Zsh, Fish, and Elvish.
-- ⚙️ **Modern TOML Configuration**: Global defaults in `~/.config/locsim/config.toml` with per-project `.locsimrc` overrides.
-- 🛡️ **Zero Unsafe Code**: 100% safe Rust, thread-safe parallel test execution, and comprehensive error handling.
+- **Named Location Profiles / Bookmarks**: Save, list, apply, and delete frequently used testing spots (`locsim save home`, `locsim use work`).
+- **Reset with IP Geolocation**: Instantly clear all mock states and detect genuine physical location via public IP lookup (`locsim reset`).
+- **Browser & Automation Exports**: Automatically updates Chrome DevTools Protocol (`cdp_geolocation.json`), GPX 1.1 tracks (`simulated_location.gpx`), and shell environment scripts (`locsim_env.sh` / `locsim_env.ps1`).
+- **Shell Auto-Completions**: First-class shell completions for PowerShell, Bash, Zsh, Fish, and Elvish.
+- **Modern TOML Configuration**: Global defaults in `~/.config/locsim/config.toml` with per-project `.locsimrc` overrides.
+- **Zero Unsafe Code**: 100% safe Rust, thread-safe parallel test execution, and comprehensive error handling.
 
 ---
 
-## 📦 Installation
+## Installation
 
 ### Via Cargo (Recommended)
 
@@ -96,7 +96,7 @@ The compiled binary will be located in:
 
 ---
 
-## 🚀 Quick Start in 10 Seconds
+## Quick Start in 10 Seconds
 
 ```bash
 # 1. Search any location by name and apply (with auto-confirm -y)
@@ -118,7 +118,8 @@ locsim reset
 
 ---
 
-## 📖 Complete Usage Guide
+## Complete Usage Guide
+
 
 ### 1. Interactive Default Prompt
 Simply run `locsim` without arguments to launch an interactive search session:
@@ -353,7 +354,7 @@ Select an option [1-7] >
 
 ---
 
-## ⚙️ Configuration & Environment Variables
+## Configuration & Environment Variables
 
 `locsim` supports configuration files with the following precedence:
 1. **CLI Flags** (`--provider`, `--api-key`)
@@ -389,7 +390,7 @@ user_agent = "locsim/0.1.0 (https://github.com/itznan/locsim; universal-location
 
 ---
 
-## 🧪 Automated Testing & CI/CD
+## Automated Testing & CI/CD
 
 ### Browser Automation (Playwright / Puppeteer)
 `locsim` exports `cdp_geolocation.json` containing exact Chrome DevTools Protocol parameters:
@@ -434,19 +435,19 @@ jobs:
 
 ---
 
-## 📚 Deep-Dive Documentation
+## Deep-Dive Documentation
 
 For advanced architecture, developer integrations, and provider guides, explore the dedicated documentation suite:
 
-- 🏛️ [**Architecture & Internals**](docs/ARCHITECTURE.md) — Trait design, memory caching, telemetry validation, and platform dispatcher mechanics.
-- 🌍 [**Geocoding Providers Guide**](docs/PROVIDERS.md) — Comprehensive guide on configuring Nominatim, LocationIQ, Mapbox, OpenCage, and Google Maps.
-- 📱 [**Mobile Emulator Guide**](docs/EMULATORS.md) — Step-by-step setup for Android Virtual Devices (AVD), multi-device ADB targeting, and iOS Simulators.
-- 🧪 [**Continuous Integration Guide**](docs/CI_INTEGRATION.md) — Playwright, Puppeteer, Selenium, Python `pytest`, and GitHub Actions workflow recipes.
-- ⚙️ [**Configuration Reference**](docs/CONFIGURATION.md) — Complete TOML schema, environment variable hierarchy, and export file paths.
+- [**Architecture & Internals**](docs/ARCHITECTURE.md) — Trait design, memory caching, telemetry validation, and platform dispatcher mechanics.
+- [**Geocoding Providers Guide**](docs/PROVIDERS.md) — Comprehensive guide on configuring Nominatim, LocationIQ, Mapbox, OpenCage, and Google Maps.
+- [**Mobile Emulator Guide**](docs/EMULATORS.md) — Step-by-step setup for Android Virtual Devices (AVD), multi-device ADB targeting, and iOS Simulators.
+- [**Continuous Integration Guide**](docs/CI_INTEGRATION.md) — Playwright, Puppeteer, Selenium, Python `pytest`, and GitHub Actions workflow recipes.
+- [**Configuration Reference**](docs/CONFIGURATION.md) — Complete TOML schema, environment variable hierarchy, and export file paths.
 
 ---
 
-## 🔒 Location Simulation Scope & Limitations
+## Location Simulation Scope & Limitations
 
 When testing location-aware applications, it is essential to understand that different technologies resolve location using different mechanisms:
 
@@ -460,7 +461,7 @@ When testing location-aware applications, it is essential to understand that dif
 
 ---
 
-## 🛠️ Contributing & Testing
+## Contributing & Testing
 
 We welcome issues, feedback, and pull requests!
 
@@ -478,7 +479,7 @@ cargo clippy --all-targets -- -D warnings
 
 ---
 
-## 📄 License
+## License
 
 Dual-licensed under either:
 - **MIT License** ([LICENSE-MIT](LICENSE) or http://opensource.org/licenses/MIT)
@@ -489,5 +490,6 @@ at your option.
 ---
 
 <div align="center">
-Made with ❤️ by <a href="https://github.com/itznan">itznan</a> and contributors.
+Made by <a href="https://github.com/itznan">itznan</a> and contributors.
 </div>
+

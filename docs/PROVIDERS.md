@@ -8,11 +8,12 @@
 
 | Provider | Name | API Key Required? | Forward Geocoding | Reverse Geocoding | Best For |
 |---|---|---|:---:|:---:|---|
-| **Nominatim** | `nominatim` (or `osm`) | ❌ No | ✅ Yes | ✅ Yes | Out-of-the-box local developer testing without signing up for services |
-| **LocationIQ** | `locationiq` (or `iq`) | ✅ Yes | ✅ Yes | ✅ Yes | High-volume OpenStreetMap queries with generous free tiers |
-| **Mapbox** | `mapbox` | ✅ Yes | ✅ Yes | ✅ Yes | High-accuracy commercial POI data and mobile navigation apps |
-| **OpenCage** | `opencage` (or `cage`) | ✅ Yes | ✅ Yes | ✅ Yes | Global addressing, forward/reverse worldwide reverse geocoding |
-| **Google Maps** | `google` | ✅ Yes | ✅ Yes | ✅ Yes | Enterprise apps and Google Places address formats |
+| **Nominatim** | `nominatim` (or `osm`) | No | Yes | Yes | Out-of-the-box local developer testing without signing up for services |
+| **LocationIQ** | `locationiq` (or `iq`) | Yes | Yes | Yes | High-volume OpenStreetMap queries with generous free tiers |
+| **Mapbox** | `mapbox` | Yes | Yes | Yes | High-accuracy commercial POI data and mobile navigation apps |
+| **OpenCage** | `opencage` (or `cage`) | Yes | Yes | Yes | Global addressing, forward/reverse worldwide reverse geocoding |
+| **Google Maps** | `google` | Yes | Yes | Yes | Enterprise apps and Google Places address formats |
+
 
 ---
 
