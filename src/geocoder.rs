@@ -1,4 +1,4 @@
-use crate::config::{AppPaths, Config};
+use crate::config::{AppPaths, Config, GeocoderProvider};
 use crate::location::{Location, LocationValidationError};
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -30,9 +30,14 @@ pub enum GeocodeError {
     #[error("JSON serialization error: {0}")]
     Json(#[from] serde_json::Error),
 
+    #[error("API key required for provider '{0}'. Pass --api-key <KEY> or set environment variable.")]
+    MissingApiKey(String),
+
     #[error("Geocoding service error: {0}")]
     Service(String),
 }
+
+
 
 /// Abstract trait for geocoding providers.
 #[async_trait]
@@ -218,6 +223,598 @@ impl Geocoder for NominatimGeocoder {
     }
 }
 
+/// LocationIQ Geocoder (Nominatim-compatible with API key)
+pub struct LocationIqGeocoder {
+    client: reqwest::Client,
+    api_key: String,
+}
+
+impl LocationIqGeocoder {
+    pub fn new(api_key: String, config: &Config) -> Self {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(config.timeout_seconds))
+            .user_agent(&config.user_agent)
+            .build()
+            .unwrap_or_default();
+
+        Self { client, api_key }
+    }
+}
+
+#[async_trait]
+impl Geocoder for LocationIqGeocoder {
+    async fn geocode(&self, query: &str) -> Result<Location, GeocodeError> {
+        let trimmed = query.trim();
+        if trimmed.is_empty() {
+            return Err(GeocodeError::NotFound("Empty query provided".to_string()));
+        }
+
+        let resp = self
+            .client
+            .get("https://us1.locationiq.com/v1/search")
+            .query(&[
+                ("key", self.api_key.as_str()),
+                ("q", trimmed),
+                ("format", "json"),
+                ("addressdetails", "1"),
+                ("limit", "1"),
+            ])
+            .send()
+            .await?;
+
+        if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            return Err(GeocodeError::RateLimited);
+        }
+
+        if !resp.status().is_success() {
+            return Err(GeocodeError::Service(format!(
+                "LocationIQ HTTP status: {}",
+                resp.status()
+            )));
+        }
+
+        let items: Vec<NominatimItem> = resp.json().await?;
+        let first = items
+            .into_iter()
+            .next()
+            .ok_or_else(|| GeocodeError::NotFound(trimmed.to_string()))?;
+
+        let lat: f64 = first
+            .lat
+            .parse()
+            .map_err(|_| GeocodeError::ParseError(format!("Invalid latitude: {}", first.lat)))?;
+        let lon: f64 = first
+            .lon
+            .parse()
+            .map_err(|_| GeocodeError::ParseError(format!("Invalid longitude: {}", first.lon)))?;
+
+        let display_name = first.display_name.unwrap_or_else(|| trimmed.to_string());
+        let name = first.name.filter(|n| !n.trim().is_empty()).unwrap_or_else(|| {
+            display_name
+                .split(',')
+                .next()
+                .unwrap_or(trimmed)
+                .trim()
+                .to_string()
+        });
+
+        Location::new(name, display_name, lat, lon).map_err(GeocodeError::InvalidCoordinate)
+    }
+
+    async fn reverse_geocode(&self, lat: f64, lon: f64) -> Result<Location, GeocodeError> {
+        Location::validate_coordinates(lat, lon).map_err(GeocodeError::InvalidCoordinate)?;
+
+        let lat_str = lat.to_string();
+        let lon_str = lon.to_string();
+        let resp = self
+            .client
+            .get("https://us1.locationiq.com/v1/reverse")
+            .query(&[
+                ("key", self.api_key.as_str()),
+                ("lat", lat_str.as_str()),
+                ("lon", lon_str.as_str()),
+                ("format", "json"),
+                ("addressdetails", "1"),
+            ])
+            .send()
+            .await?;
+
+        if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            return Err(GeocodeError::RateLimited);
+        }
+
+        if !resp.status().is_success() {
+            return Err(GeocodeError::Service(format!(
+                "LocationIQ reverse HTTP status: {}",
+                resp.status()
+            )));
+        }
+
+        let item: NominatimItem = resp.json().await?;
+        let display = item
+            .display_name
+            .unwrap_or_else(|| format!("{:.5}, {:.5}", lat, lon));
+        let name = item
+            .name
+            .filter(|n| !n.trim().is_empty())
+            .unwrap_or_else(|| display.split(',').next().unwrap_or("Custom Location").trim().to_string());
+
+        Location::new(name, display, lat, lon).map_err(GeocodeError::InvalidCoordinate)
+    }
+}
+
+/// Mapbox Geocoding API response
+#[derive(Debug, Deserialize)]
+struct MapboxResponse {
+    pub features: Vec<MapboxFeature>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MapboxFeature {
+    pub text: Option<String>,
+    pub place_name: Option<String>,
+    pub center: Option<Vec<f64>>, // [lon, lat]
+}
+
+/// Mapbox Places Geocoder
+pub struct MapboxGeocoder {
+    client: reqwest::Client,
+    access_token: String,
+}
+
+impl MapboxGeocoder {
+    pub fn new(access_token: String, config: &Config) -> Self {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(config.timeout_seconds))
+            .user_agent(&config.user_agent)
+            .build()
+            .unwrap_or_default();
+
+        Self {
+            client,
+            access_token,
+        }
+    }
+}
+
+#[async_trait]
+impl Geocoder for MapboxGeocoder {
+    async fn geocode(&self, query: &str) -> Result<Location, GeocodeError> {
+        let trimmed = query.trim();
+        if trimmed.is_empty() {
+            return Err(GeocodeError::NotFound("Empty query provided".to_string()));
+        }
+
+        let mut url = reqwest::Url::parse("https://api.mapbox.com/geocoding/v5/mapbox.places/").unwrap();
+        if let Ok(mut segments) = url.path_segments_mut() {
+            segments.push(&format!("{}.json", trimmed));
+        }
+
+        let resp = self
+            .client
+            .get(url)
+            .query(&[
+                ("access_token", self.access_token.as_str()),
+                ("limit", "1"),
+            ])
+            .send()
+            .await?;
+
+        if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            return Err(GeocodeError::RateLimited);
+        }
+
+        if !resp.status().is_success() {
+            return Err(GeocodeError::Service(format!(
+                "Mapbox HTTP status: {}",
+                resp.status()
+            )));
+        }
+
+        let data: MapboxResponse = resp.json().await?;
+        let first = data
+            .features
+            .into_iter()
+            .next()
+            .ok_or_else(|| GeocodeError::NotFound(trimmed.to_string()))?;
+
+        let center = first
+            .center
+            .filter(|c| c.len() >= 2)
+            .ok_or_else(|| GeocodeError::ParseError("Missing center coordinate from Mapbox".to_string()))?;
+
+        let lon = center[0];
+        let lat = center[1];
+        let name = first.text.unwrap_or_else(|| trimmed.to_string());
+        let address = first.place_name.unwrap_or_else(|| name.clone());
+
+        Location::new(name, address, lat, lon).map_err(GeocodeError::InvalidCoordinate)
+    }
+
+    async fn reverse_geocode(&self, lat: f64, lon: f64) -> Result<Location, GeocodeError> {
+        Location::validate_coordinates(lat, lon).map_err(GeocodeError::InvalidCoordinate)?;
+
+        let mut url = reqwest::Url::parse("https://api.mapbox.com/geocoding/v5/mapbox.places/").unwrap();
+        if let Ok(mut segments) = url.path_segments_mut() {
+            segments.push(&format!("{:.6},{:.6}.json", lon, lat));
+        }
+
+        let resp = self
+            .client
+            .get(url)
+            .query(&[
+                ("access_token", self.access_token.as_str()),
+                ("limit", "1"),
+            ])
+            .send()
+            .await?;
+
+        if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            return Err(GeocodeError::RateLimited);
+        }
+
+        if !resp.status().is_success() {
+            return Err(GeocodeError::Service(format!(
+                "Mapbox reverse HTTP status: {}",
+                resp.status()
+            )));
+        }
+
+        let data: MapboxResponse = resp.json().await?;
+        let first = data
+            .features
+            .into_iter()
+            .next()
+            .ok_or_else(|| GeocodeError::NotFound(format!("{:.6}, {:.6}", lat, lon)))?;
+
+        let name = first
+            .text
+            .unwrap_or_else(|| format!("{:.5}, {:.5}", lat, lon));
+        let address = first.place_name.unwrap_or_else(|| name.clone());
+
+        Location::new(name, address, lat, lon).map_err(GeocodeError::InvalidCoordinate)
+    }
+}
+
+/// OpenCage Data Geocoder response
+#[derive(Debug, Deserialize)]
+struct OpenCageResponse {
+    pub results: Vec<OpenCageResult>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenCageResult {
+    pub formatted: Option<String>,
+    pub geometry: Option<OpenCageGeometry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenCageGeometry {
+    pub lat: f64,
+    pub lng: f64,
+}
+
+/// OpenCage Data Geocoder
+pub struct OpenCageGeocoder {
+    client: reqwest::Client,
+    api_key: String,
+}
+
+impl OpenCageGeocoder {
+    pub fn new(api_key: String, config: &Config) -> Self {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(config.timeout_seconds))
+            .user_agent(&config.user_agent)
+            .build()
+            .unwrap_or_default();
+
+        Self { client, api_key }
+    }
+}
+
+#[async_trait]
+impl Geocoder for OpenCageGeocoder {
+    async fn geocode(&self, query: &str) -> Result<Location, GeocodeError> {
+        let trimmed = query.trim();
+        if trimmed.is_empty() {
+            return Err(GeocodeError::NotFound("Empty query provided".to_string()));
+        }
+
+        let resp = self
+            .client
+            .get("https://api.opencagedata.com/geocode/v1/json")
+            .query(&[
+                ("q", trimmed),
+                ("key", self.api_key.as_str()),
+                ("limit", "1"),
+            ])
+            .send()
+            .await?;
+
+        if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            return Err(GeocodeError::RateLimited);
+        }
+
+        if !resp.status().is_success() {
+            return Err(GeocodeError::Service(format!(
+                "OpenCage HTTP status: {}",
+                resp.status()
+            )));
+        }
+
+        let data: OpenCageResponse = resp.json().await?;
+        let first = data
+            .results
+            .into_iter()
+            .next()
+            .ok_or_else(|| GeocodeError::NotFound(trimmed.to_string()))?;
+
+        let geom = first
+            .geometry
+            .ok_or_else(|| GeocodeError::ParseError("Missing geometry in OpenCage response".to_string()))?;
+
+        let address = first.formatted.unwrap_or_else(|| trimmed.to_string());
+        let name = address
+            .split(',')
+            .next()
+            .unwrap_or(trimmed)
+            .trim()
+            .to_string();
+
+        Location::new(name, address, geom.lat, geom.lng).map_err(GeocodeError::InvalidCoordinate)
+    }
+
+    async fn reverse_geocode(&self, lat: f64, lon: f64) -> Result<Location, GeocodeError> {
+        Location::validate_coordinates(lat, lon).map_err(GeocodeError::InvalidCoordinate)?;
+
+        let q = format!("{:.6}+{:.6}", lat, lon);
+        let resp = self
+            .client
+            .get("https://api.opencagedata.com/geocode/v1/json")
+            .query(&[
+                ("q", q.as_str()),
+                ("key", self.api_key.as_str()),
+                ("limit", "1"),
+            ])
+            .send()
+            .await?;
+
+        if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            return Err(GeocodeError::RateLimited);
+        }
+
+        if !resp.status().is_success() {
+            return Err(GeocodeError::Service(format!(
+                "OpenCage reverse HTTP status: {}",
+                resp.status()
+            )));
+        }
+
+        let data: OpenCageResponse = resp.json().await?;
+        let first = data
+            .results
+            .into_iter()
+            .next()
+            .ok_or_else(|| GeocodeError::NotFound(format!("{:.6}, {:.6}", lat, lon)))?;
+
+        let address = first
+            .formatted
+            .unwrap_or_else(|| format!("{:.5}, {:.5}", lat, lon));
+        let name = address
+            .split(',')
+            .next()
+            .unwrap_or("Custom Location")
+            .trim()
+            .to_string();
+
+        Location::new(name, address, lat, lon).map_err(GeocodeError::InvalidCoordinate)
+    }
+}
+
+/// Google Maps Geocoder response
+#[derive(Debug, Deserialize)]
+struct GoogleResponse {
+    pub status: String,
+    pub results: Vec<GoogleResult>,
+    pub error_message: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GoogleResult {
+    pub formatted_address: Option<String>,
+    pub geometry: Option<GoogleGeometry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GoogleGeometry {
+    pub location: Option<GoogleLatLng>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GoogleLatLng {
+    pub lat: f64,
+    pub lng: f64,
+}
+
+/// Google Maps Geocoder
+pub struct GoogleMapsGeocoder {
+    client: reqwest::Client,
+    api_key: String,
+}
+
+impl GoogleMapsGeocoder {
+    pub fn new(api_key: String, config: &Config) -> Self {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(config.timeout_seconds))
+            .user_agent(&config.user_agent)
+            .build()
+            .unwrap_or_default();
+
+        Self { client, api_key }
+    }
+}
+
+#[async_trait]
+impl Geocoder for GoogleMapsGeocoder {
+    async fn geocode(&self, query: &str) -> Result<Location, GeocodeError> {
+        let trimmed = query.trim();
+        if trimmed.is_empty() {
+            return Err(GeocodeError::NotFound("Empty query provided".to_string()));
+        }
+
+        let resp = self
+            .client
+            .get("https://maps.googleapis.com/maps/api/geocode/json")
+            .query(&[
+                ("address", trimmed),
+                ("key", self.api_key.as_str()),
+            ])
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            return Err(GeocodeError::Service(format!(
+                "Google Maps HTTP status: {}",
+                resp.status()
+            )));
+        }
+
+        let data: GoogleResponse = resp.json().await?;
+        if data.status == "OVER_QUERY_LIMIT" {
+            return Err(GeocodeError::RateLimited);
+        }
+        if data.status == "ZERO_RESULTS" {
+            return Err(GeocodeError::NotFound(trimmed.to_string()));
+        }
+        if data.status != "OK" {
+            return Err(GeocodeError::Service(
+                data.error_message.unwrap_or(data.status),
+            ));
+        }
+
+        let first = data
+            .results
+            .into_iter()
+            .next()
+            .ok_or_else(|| GeocodeError::NotFound(trimmed.to_string()))?;
+
+        let loc = first
+            .geometry
+            .and_then(|g| g.location)
+            .ok_or_else(|| GeocodeError::ParseError("Missing geometry location in Google response".to_string()))?;
+
+        let address = first.formatted_address.unwrap_or_else(|| trimmed.to_string());
+        let name = address
+            .split(',')
+            .next()
+            .unwrap_or(trimmed)
+            .trim()
+            .to_string();
+
+        Location::new(name, address, loc.lat, loc.lng).map_err(GeocodeError::InvalidCoordinate)
+    }
+
+    async fn reverse_geocode(&self, lat: f64, lon: f64) -> Result<Location, GeocodeError> {
+        Location::validate_coordinates(lat, lon).map_err(GeocodeError::InvalidCoordinate)?;
+
+        let latlng = format!("{:.6},{:.6}", lat, lon);
+        let resp = self
+            .client
+            .get("https://maps.googleapis.com/maps/api/geocode/json")
+            .query(&[
+                ("latlng", latlng.as_str()),
+                ("key", self.api_key.as_str()),
+            ])
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            return Err(GeocodeError::Service(format!(
+                "Google Maps reverse HTTP status: {}",
+                resp.status()
+            )));
+        }
+
+        let data: GoogleResponse = resp.json().await?;
+        if data.status == "OVER_QUERY_LIMIT" {
+            return Err(GeocodeError::RateLimited);
+        }
+        if data.status == "ZERO_RESULTS" {
+            return Err(GeocodeError::NotFound(format!("{:.6}, {:.6}", lat, lon)));
+        }
+        if data.status != "OK" {
+            return Err(GeocodeError::Service(
+                data.error_message.unwrap_or(data.status),
+            ));
+        }
+
+        let first = data
+            .results
+            .into_iter()
+            .next()
+            .ok_or_else(|| GeocodeError::NotFound(format!("{:.6}, {:.6}", lat, lon)))?;
+
+        let address = first
+            .formatted_address
+            .unwrap_or_else(|| format!("{:.5}, {:.5}", lat, lon));
+        let name = address
+            .split(',')
+            .next()
+            .unwrap_or("Custom Location")
+            .trim()
+            .to_string();
+
+        Location::new(name, address, lat, lon).map_err(GeocodeError::InvalidCoordinate)
+    }
+}
+
+#[async_trait]
+impl Geocoder for Box<dyn Geocoder> {
+    async fn geocode(&self, query: &str) -> Result<Location, GeocodeError> {
+        (**self).geocode(query).await
+    }
+
+    async fn reverse_geocode(&self, lat: f64, lon: f64) -> Result<Location, GeocodeError> {
+        (**self).reverse_geocode(lat, lon).await
+    }
+}
+
+/// Factory function to instantiate the requested geocoder backend.
+pub fn create_geocoder(
+    provider: GeocoderProvider,
+    api_key: Option<String>,
+    config: &Config,
+) -> Result<Box<dyn Geocoder>, GeocodeError> {
+    match provider {
+        GeocoderProvider::Nominatim => Ok(Box::new(NominatimGeocoder::new(config.clone()))),
+        GeocoderProvider::Locationiq => {
+            let key = api_key.or_else(|| config.api_key.clone()).ok_or_else(|| {
+                GeocodeError::MissingApiKey("LocationIQ".to_string())
+            })?;
+            Ok(Box::new(LocationIqGeocoder::new(key, config)))
+        }
+        GeocoderProvider::Mapbox => {
+            let key = api_key.or_else(|| config.api_key.clone()).ok_or_else(|| {
+                GeocodeError::MissingApiKey("Mapbox".to_string())
+            })?;
+            Ok(Box::new(MapboxGeocoder::new(key, config)))
+        }
+        GeocoderProvider::Opencage => {
+            let key = api_key.or_else(|| config.api_key.clone()).ok_or_else(|| {
+                GeocodeError::MissingApiKey("OpenCage".to_string())
+            })?;
+            Ok(Box::new(OpenCageGeocoder::new(key, config)))
+        }
+        GeocoderProvider::Google => {
+            let key = api_key.or_else(|| config.api_key.clone()).ok_or_else(|| {
+                GeocodeError::MissingApiKey("Google Maps".to_string())
+            })?;
+            Ok(Box::new(GoogleMapsGeocoder::new(key, config)))
+        }
+    }
+}
+
+
 /// Caching wrapper around any Geocoder implementation.
 pub struct CachedGeocoder<G: Geocoder> {
     inner: G,
@@ -354,10 +951,13 @@ mod tests {
         mock_data.insert("Marwadi University".to_string(), rajkot.clone());
 
         let mock = MockGeocoder { locations: mock_data };
-        let mut config = Config::default();
-        config.cache_enabled = true;
+        let config = Config {
+            cache_enabled: true,
+            ..Config::default()
+        };
 
         let cached = CachedGeocoder::new(mock, &config);
+
 
         // First call should resolve
         let res = cached.geocode("Marwadi University").await.unwrap();
@@ -381,4 +981,32 @@ mod tests {
         let err = cached.geocode("Unknown Place That Does Not Exist").await;
         assert!(matches!(err, Err(GeocodeError::NotFound(_))));
     }
+
+    #[test]
+    fn test_create_geocoder_nominatim_no_key_required() {
+        let config = Config::default();
+        let res = create_geocoder(GeocoderProvider::Nominatim, None, &config);
+        assert!(res.is_ok());
+    }
+
+    #[test]
+    fn test_create_geocoder_missing_api_key() {
+        let config = Config::default();
+        let res = create_geocoder(GeocoderProvider::Mapbox, None, &config);
+        assert!(matches!(res, Err(GeocodeError::MissingApiKey(_))));
+
+        let res2 = create_geocoder(GeocoderProvider::Google, None, &config);
+        assert!(matches!(res2, Err(GeocodeError::MissingApiKey(_))));
+    }
+
+    #[test]
+    fn test_create_geocoder_with_api_key() {
+        let config = Config::default();
+        let res = create_geocoder(GeocoderProvider::Mapbox, Some("pk.test123".to_string()), &config);
+        assert!(res.is_ok());
+
+        let res2 = create_geocoder(GeocoderProvider::Locationiq, Some("iq_test_key".to_string()), &config);
+        assert!(res2.is_ok());
+    }
 }
+

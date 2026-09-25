@@ -12,6 +12,18 @@ pub enum LocationValidationError {
 
     #[error("Coordinates must be finite numbers (cannot be NaN or Infinite)")]
     NonFiniteCoordinate,
+
+    #[error("Altitude must be a finite number (cannot be NaN or Infinite)")]
+    NonFiniteAltitude,
+
+    #[error("Accuracy must be a non-negative finite number (got {0})")]
+    InvalidAccuracy(f64),
+
+    #[error("Speed must be a non-negative finite number (got {0})")]
+    InvalidSpeed(f64),
+
+    #[error("Heading must be between 0.0 and 360.0 degrees (got {0})")]
+    InvalidHeading(f64),
 }
 
 /// Represents a validated geographical location with descriptive metadata.
@@ -21,17 +33,41 @@ pub struct Location {
     pub address: String,
     pub latitude: f64,
     pub longitude: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub altitude: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accuracy: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heading: Option<f64>,
 }
 
 impl Location {
-    /// Create a new Location with validated coordinates.
+    /// Create a new Location with validated coordinates (without telemetry).
     pub fn new(
         name: impl Into<String>,
         address: impl Into<String>,
         latitude: f64,
         longitude: f64,
     ) -> Result<Self, LocationValidationError> {
+        Self::new_with_telemetry(name, address, latitude, longitude, None, None, None, None)
+    }
+
+    /// Create a new Location with validated coordinates and optional telemetry fields.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_telemetry(
+        name: impl Into<String>,
+        address: impl Into<String>,
+        latitude: f64,
+        longitude: f64,
+        altitude: Option<f64>,
+        accuracy: Option<f64>,
+        speed: Option<f64>,
+        heading: Option<f64>,
+    ) -> Result<Self, LocationValidationError> {
         Self::validate_coordinates(latitude, longitude)?;
+        Self::validate_telemetry(altitude, accuracy, speed, heading)?;
 
         let name_str = name.into();
         let address_str = address.into();
@@ -49,7 +85,77 @@ impl Location {
             },
             latitude,
             longitude,
+            altitude,
+            accuracy,
+            speed,
+            heading,
         })
+    }
+
+    /// Validate telemetry fields if present.
+    pub fn validate_telemetry(
+        altitude: Option<f64>,
+        accuracy: Option<f64>,
+        speed: Option<f64>,
+        heading: Option<f64>,
+    ) -> Result<(), LocationValidationError> {
+        if let Some(alt) = altitude {
+            if alt.is_nan() || alt.is_infinite() {
+                return Err(LocationValidationError::NonFiniteAltitude);
+            }
+        }
+
+        if let Some(acc) = accuracy {
+            if acc.is_nan() || acc.is_infinite() || acc < 0.0 {
+                return Err(LocationValidationError::InvalidAccuracy(acc));
+            }
+        }
+
+        if let Some(spd) = speed {
+            if spd.is_nan() || spd.is_infinite() || spd < 0.0 {
+                return Err(LocationValidationError::InvalidSpeed(spd));
+            }
+        }
+
+        if let Some(hdg) = heading {
+            if hdg.is_nan() || hdg.is_infinite() || !(0.0..=360.0).contains(&hdg) {
+                return Err(LocationValidationError::InvalidHeading(hdg));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Builder method to attach or update altitude in meters.
+    #[allow(dead_code)]
+    pub fn with_altitude(mut self, altitude: Option<f64>) -> Result<Self, LocationValidationError> {
+        Self::validate_telemetry(altitude, None, None, None)?;
+        self.altitude = altitude;
+        Ok(self)
+    }
+
+    /// Builder method to attach or update horizontal accuracy radius in meters.
+    #[allow(dead_code)]
+    pub fn with_accuracy(mut self, accuracy: Option<f64>) -> Result<Self, LocationValidationError> {
+        Self::validate_telemetry(None, accuracy, None, None)?;
+        self.accuracy = accuracy;
+        Ok(self)
+    }
+
+    /// Builder method to attach or update speed in meters per second.
+    #[allow(dead_code)]
+    pub fn with_speed(mut self, speed: Option<f64>) -> Result<Self, LocationValidationError> {
+        Self::validate_telemetry(None, None, speed, None)?;
+        self.speed = speed;
+        Ok(self)
+    }
+
+    /// Builder method to attach or update heading in degrees [0, 360].
+    #[allow(dead_code)]
+    pub fn with_heading(mut self, heading: Option<f64>) -> Result<Self, LocationValidationError> {
+        Self::validate_telemetry(None, None, None, heading)?;
+        self.heading = heading;
+        Ok(self)
     }
 
     /// Validate latitude and longitude bounds:
@@ -193,6 +299,56 @@ mod tests {
     fn test_location_json_serialization() {
         let loc = Location::new("Test", "Test Address", 12.34, 56.78).unwrap();
         let json = serde_json::to_string(&loc).expect("Serialize");
+        let deserialized: Location = serde_json::from_str(&json).expect("Deserialize");
+        assert_eq!(loc, deserialized);
+        assert_eq!(deserialized.altitude, None);
+    }
+
+    #[test]
+    fn test_location_telemetry_validations_and_builder() {
+        let loc = Location::new("Tele Test", "Address", 10.0, 20.0)
+            .unwrap()
+            .with_altitude(Some(150.5))
+            .unwrap()
+            .with_accuracy(Some(5.0))
+            .unwrap()
+            .with_speed(Some(12.2))
+            .unwrap()
+            .with_heading(Some(180.0))
+            .unwrap();
+
+        assert_eq!(loc.altitude, Some(150.5));
+        assert_eq!(loc.accuracy, Some(5.0));
+        assert_eq!(loc.speed, Some(12.2));
+        assert_eq!(loc.heading, Some(180.0));
+
+        // Invalid accuracy (negative)
+        assert!(loc.clone().with_accuracy(Some(-1.0)).is_err());
+        // Invalid speed (negative)
+        assert!(loc.clone().with_speed(Some(-0.5)).is_err());
+        // Invalid heading (> 360.0)
+        assert!(loc.clone().with_heading(Some(361.0)).is_err());
+        // Non-finite altitude
+        assert!(loc.clone().with_altitude(Some(f64::NAN)).is_err());
+    }
+
+    #[test]
+    fn test_location_telemetry_json_roundtrip() {
+        let loc = Location::new_with_telemetry(
+            "Tele",
+            "Addr",
+            30.0,
+            40.0,
+            Some(100.0),
+            Some(10.0),
+            Some(5.0),
+            Some(90.0),
+        )
+        .unwrap();
+
+        let json = serde_json::to_string(&loc).expect("Serialize");
+        assert!(json.contains(r#""altitude":100.0"#));
+        assert!(json.contains(r#""accuracy":10.0"#));
         let deserialized: Location = serde_json::from_str(&json).expect("Deserialize");
         assert_eq!(loc, deserialized);
     }

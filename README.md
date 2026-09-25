@@ -1,116 +1,127 @@
-# locsim - Universal Location Simulator in Rust
+# locsim
 
-A fast, lightweight, universal CLI-based location simulator written in Rust.
+<div align="center">
 
-`locsim` enables developers, QA engineers, and testers to resolve any location name or address to geographic coordinates, persist mock locations, and integrate with documented OS-supported testing mechanisms, browser devtools, GPS emulators, and local test suites across **Windows**, **Linux**, and **macOS**.
+[![Crates.io](https://img.shields.io/badge/crates.io-v0.1.0-orange.svg?style=for-the-badge&logo=rust)](https://crates.io/crates/locsim)
+[![License](https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-blue.svg?style=for-the-badge)](LICENSE)
+[![Rust Version](https://img.shields.io/badge/rust-1.75%2B-blueviolet.svg?style=for-the-badge&logo=rust)](https://www.rust-lang.org)
+[![Platform Support](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Android%20%7C%20iOS-brightgreen.svg?style=for-the-badge)](https://github.com/itznan/locsim)
+[![Tests Passing](https://img.shields.io/badge/tests-46%20passed-success.svg?style=for-the-badge&logo=githubactions)](https://github.com/itznan/locsim)
 
----
+**A universal, cross-platform location simulator written in 100% safe Rust.**  
+*Instantly spoof device coordinates, altitude, accuracy, speed, and heading across Windows, Linux, macOS, Android emulators, iOS simulators, and headless browsers.*
 
-## Features
+[Features](#-key-features) • [Installation](#-installation) • [Quick Start](#-quick-start-in-10-seconds) • [Usage Guide](#-complete-usage-guide) • [Docs](#-deep-dive-documentation) • [CI/CD Testing](#-automated-testing--cicd)
 
-- **Intuitive Interactive Mode**: Run `locsim` without arguments for an interactive search prompt with clean ASCII banners.
-- **Menu-Driven Interactive Mode**: Run `locsim -i` or `locsim --interactive` for a complete management menu (search, manual coordinates, show, clear, exit).
-- **Direct Location Resolution**: Search any place name or address directly (e.g. `locsim "Marwadi University, Rajkot"` or `locsim "Mumbai, India"`).
-- **Manual Coordinate Input**: Directly set coordinates with rigorous boundary validation (`locsim --lat 22.3072 --lon 73.1812`).
-- **Extensible Trait Architecture**: Geocoders and OS location providers are cleanly abstracted behind async and platform traits.
-- **Local Response Caching**: Resolves queries via OpenStreetMap Nominatim and caches results locally in JSON for speed and rate-limit compliance.
-- **Cross-Platform OS Integration**:
-  - **Windows**: Integrates with Windows Registry (`HKCU\Software\Locsim`), Windows Sensor Driver Overrides (`HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Sensor\Overrides\{BFA794E4-F964-4F53-B00F-CEDD57E4457E}`), Visual Studio GPX simulation, and PowerShell environment script.
-  - **Linux**: Generates `org.freedesktop.GeoClue2` static source configuration (`geoclue-static.conf`), standard NMEA-0183 (`$GPRMC`, `$GPGGA`) feeds for `gpsd`/`gpsfake`, and shell export script.
-  - **macOS**: Integrates with Apple Xcode Simulator location simulation (`xcrun simctl location booted set <lat> <lon>`), GPX waypoints, and shell export script.
-- **Browser Geolocation DevTools Support**: Automatically exports Chrome DevTools Protocol (`cdp_geolocation.json`) for headless browsers (Playwright, Puppeteer) and Chrome/Edge/Firefox DevTools Sensors.
-- **Robust Error Handling**: Powered by `thiserror`, with 100% safe Rust and zero unsafe blocks.
+</div>
 
 ---
 
-## Architecture & Project Structure
+## 🧭 Why `locsim`?
+
+Testing location-dependent applications is notoriously fragmented:
+- **Browsers** require Chrome DevTools Protocol (`Emulation.setGeolocationOverride`) or manual sensor panels.
+- **Android emulators** require `adb emu geo fix` or telnet commands with custom parameter ordering.
+- **iOS simulators** require `xcrun simctl location booted set`.
+- **Desktop operating systems** require registry overrides, GeoClue static configs, or NMEA-0183 serial feeds.
+- **CI/CD test suites** require deterministic JSON payloads without third-party rate limits.
+
+**`locsim` solves this with a single command.**  
+Whether you provide a place name (`"Tokyo Station"`), coordinates (`35.6812, 139.7671`), or a saved bookmark (`locsim use home`), `locsim` resolves the position, validates all coordinates and telemetry bounds, and simultaneously broadcasts the simulated state to your operating system, connected mobile emulators, browser test harnesses, and developer test scripts.
+
+---
+
+## 🏛️ Multi-Layer Architecture
 
 ```text
-src/
-├── main.rs            # Application entry point, CLI orchestration, banner, and UI formatters
-├── cli.rs             # Command-line arguments definition using clap derive
-├── location.rs        # Location model, coordinate boundary validation (-90..90, -180..180)
-├── geocoder.rs        # Geocoder trait, Nominatim implementation, and cached layer
-├── platform/
-│   ├── mod.rs         # LocationProvider trait, diagnostics, GPX, and CDP generators
-│   ├── windows.rs     # Windows WinRT / Registry / Sensor Driver provider
-│   ├── linux.rs       # Linux GeoClue2 static source / gpsd NMEA provider
-│   └── macos.rs       # macOS Xcode simctl / GPX waypoint provider
-└── config.rs          # Project directories, configuration, and export paths
-```
-
-### Core Traits
-
-#### Geocoder Trait
-```rust
-#[async_trait]
-pub trait Geocoder: Send + Sync {
-    async fn geocode(&self, query: &str) -> Result<Location, GeocodeError>;
-    async fn reverse_geocode(&self, lat: f64, lon: f64) -> Result<Location, GeocodeError>;
-}
-```
-
-#### LocationProvider Trait
-```rust
-pub trait LocationProvider: Send + Sync {
-    fn set_location(&self, location: &Location) -> Result<(), LocationError>;
-    fn get_location(&self) -> Result<Option<Location>, LocationError>;
-    fn clear_location(&self) -> Result<(), LocationError>;
-    fn provider_name(&self) -> &str;
-    fn diagnostics(&self) -> ProviderDiagnostics;
-}
+                               ┌──────────────────────────┐
+                               │   locsim CLI / CI Test   │
+                               └────────────┬─────────────┘
+                                            │
+                                            ▼
+                    ┌───────────────────────────────────────────────┐
+                    │               Location Core                   │
+                    │  - Lat / Lon Validation (-90..90, -180..180)  │
+                    │  - Altitude, Accuracy, Speed, Heading         │
+                    │  - In-Memory & Disk Cached Geocoding          │
+                    └───────────────────────┬───────────────────────┘
+                                            │
+         ┌──────────────────┬───────────────┼───────────────┬──────────────────┐
+         ▼                  ▼               ▼               ▼                  ▼
+  ┌──────────────┐   ┌──────────────┐ ┌───────────┐  ┌─────────────┐    ┌──────────────┐
+  │   Windows    │   │    Linux     │ │   macOS   │  │   Android   │    │  Chromium    │
+  │ WinRT / HKCU │   │  GeoClue2 &  │ │   Xcode   │  │  ADB Bridge │    │  CDP Sensors │
+  │ & Sensor HW  │   │  gpsd NMEA   │ │  simctl   │  │ emu geo fix │    │ & Playwright │
+  └──────────────┘   └──────────────┘ └───────────┘  └─────────────┘    └──────────────┘
 ```
 
 ---
 
-## Installation & Building
+## ⚡ Key Features
 
-### Prerequisites
+- 🌍 **Natural Language Geocoding**: Resolve any address or point of interest with OpenStreetMap Nominatim, LocationIQ, Mapbox, OpenCage, or Google Maps.
+- 🔄 **First-Class Reverse Geocoding**: Convert coordinates into human-readable street addresses instantly via `--reverse` / `-r`.
+- 🛰️ **Extended Real-World Telemetry**: Full simulation of **altitude** (meters), horizontal **accuracy** (meters), ground **speed** (m/s), and **heading** (0.0°–360.0° bearing).
+- 📱 **Mobile Emulator Bridges**:
+  - **Android ADB**: Automatically detects running AVDs and dispatches `adb emu geo fix` and `cmd location set-location`. Target individual devices with `--android-device`.
+  - **iOS Simulator**: Automatic synchronization via `xcrun simctl location booted set`.
+- 🔖 **Named Location Profiles / Bookmarks**: Save, list, apply, and delete frequently used testing spots (`locsim save home`, `locsim use work`).
+- 🌐 **Reset with IP Geolocation**: Instantly clear all mock states and detect genuine physical location via public IP lookup (`locsim reset`).
+- 💻 **Browser & Automation Exports**: Automatically updates Chrome DevTools Protocol (`cdp_geolocation.json`), GPX 1.1 tracks (`simulated_location.gpx`), and shell environment scripts (`locsim_env.sh` / `locsim_env.ps1`).
+- 🐚 **Shell Auto-Completions**: First-class shell completions for PowerShell, Bash, Zsh, Fish, and Elvish.
+- ⚙️ **Modern TOML Configuration**: Global defaults in `~/.config/locsim/config.toml` with per-project `.locsimrc` overrides.
+- 🛡️ **Zero Unsafe Code**: 100% safe Rust, thread-safe parallel test execution, and comprehensive error handling.
 
-- [Rust](https://www.rust-lang.org/) (1.75+ or later recommended, Cargo 1.80+)
+---
+
+## 📦 Installation
+
+### Via Cargo (Recommended)
+
+```bash
+cargo install locsim
+```
 
 ### Building from Source
 
-Clone the repository and build the release binary:
-
 ```bash
-git clone https://github.com/locsim/locsim.git
+git clone https://github.com/itznan/locsim.git
 cd locsim
-
-# Build standalone release executable
 cargo build --release
 ```
 
-The resulting standalone executable will be located at:
+The compiled binary will be located in:
+- `target/release/locsim` (Linux / macOS)
+- `target/release/locsim.exe` (Windows)
 
-```text
-target/release/locsim        # (Linux / macOS)
-target/release/locsim.exe    # (Windows)
-```
+---
 
-You can optionally install it into your Cargo bin path:
+## 🚀 Quick Start in 10 Seconds
 
 ```bash
-cargo install --path .
-```
+# 1. Search any location by name and apply (with auto-confirm -y)
+locsim "Empire State Building, New York" -y
 
-### Running with Administrator Privileges (Windows)
-
-To apply system-wide Windows Sensor Driver Overrides (`HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Sensor\Overrides\...`), run your Command Prompt or PowerShell terminal as **Administrator**:
-
-```cmd
-# Run directly from an elevated terminal:
-locsim "Mumbai, India"
+# 2. View active simulation status, diagnostics, and exports
 locsim --show
+
+# 3. Save as a bookmark for rapid testing
+locsim save nyc
+
+# 4. Jump anywhere else, then switch back instantly
+locsim "Tokyo Tower" -y
+locsim use nyc
+
+# 5. Clear simulation and detect your real physical IP location
+locsim reset
 ```
 
 ---
 
-## Usage Guide
+## 📖 Complete Usage Guide
 
 ### 1. Interactive Default Prompt
-
-Simply run `locsim`:
+Simply run `locsim` without arguments to launch an interactive search session:
 
 ```text
 $ locsim
@@ -120,18 +131,17 @@ $ locsim
 ╚══════════════════════════════════════╝
 
 Enter a location:
-> Marwadi University, Gauridad, Rajkot, Gujarat, India
+> Eiffel Tower, Paris, France
 
 Searching location...
 
 ✓ Location found
 
-Location : Marwadi University
-Address  : Rajkot - Morbi Highway, Rajkot Taluka, Gujarat
-           India - 360003
+Location : Eiffel Tower
+Address  : 5, Avenue Anatole France, Quartier du Gros-Caillou, Paris, 75007, France
 
-Latitude : 22.367601
-Longitude: 70.797092
+Latitude : 48.858370
+Longitude: 2.294481
 
 Set this as simulated location? [Y/n] > y
 
@@ -140,133 +150,344 @@ Set this as simulated location? [Y/n] > y
   OS Mechanism: WinRT Sensor Testing Overrides & Developer State
 
 Generated integration files:
-  • C:\Users\user\AppData\Roaming\locsim\locsim\config\current_location.json
-  • C:\Users\user\AppData\Roaming\locsim\locsim\config\simulated_location.gpx
-  • C:\Users\user\AppData\Roaming\locsim\locsim\config\cdp_geolocation.json
-  • C:\Users\user\AppData\Roaming\locsim\locsim\config\locsim_env.ps1
+  • ~/.config/locsim/current_location.json
+  • ~/.config/locsim/simulated_location.gpx
+  • ~/.config/locsim/cdp_geolocation.json
+  • ~/.config/locsim/locsim_env.ps1
 ```
 
-### 2. Direct Search by Location Name
-
+### 2. Search by Place Name or Address
 ```bash
-# Search and prompt confirmation
-locsim "Mumbai, India"
+# Search with interactive confirmation
+locsim "Sydney Opera House"
 
 # Search and automatically accept confirmation (-y / --yes)
-locsim "Marwadi University, Rajkot" -y
+locsim "Berlin Hauptbahnhof" -y
 ```
 
-### 3. Manual Coordinate Input
-
-Coordinates are validated to ensure `-90.0 <= lat <= 90.0` and `-180.0 <= lon <= 180.0`:
-
+### 3. First-Class Reverse Geocoding (`-r` / `--reverse`)
+Translate GPS coordinates back into a human-readable street address:
 ```bash
-locsim --lat 22.3072 --lon 73.1812
+# Lookup coordinates and display address
+locsim -r 37.7749 -122.4194
+
+# Lookup coordinates and apply immediately to OS & emulators
+locsim -r 37.7749 -122.4194 -y
 ```
 
-### 4. Display Current Simulated Location & Diagnostics
+### 4. Manual Coordinate Input (`--lat` & `--lon`)
+Directly set coordinates with strict boundary verification:
+```bash
+locsim --lat 22.3688 --lon 70.8022 -y
+```
 
+### 5. Extended Real-World Telemetry
+Simulate realistic vehicular movement, flight, drone telemetry, or low-accuracy GPS drift:
+```bash
+locsim "Golden Gate Bridge" \
+  --altitude 67.5 \
+  --accuracy 5.0 \
+  --speed 18.5 \
+  --heading 350.0 \
+  -y
+```
+
+| Parameter | Unit | Description | Validation |
+|---|---|---|---|
+| `--altitude` | Meters | Altitude above sea level | Finite float |
+| `--accuracy` | Meters | Horizontal GPS accuracy radius | Must be >= 0.0 |
+| `--speed` | m/s | Ground velocity (meters per second) | Must be >= 0.0 |
+| `--heading` | Degrees | Bearing clockwise from True North | 0.0° to 360.0° |
+
+### 6. Location Profiles & Bookmarks
+Never re-type coordinates or queries you test repeatedly:
+```bash
+# Save current location as a bookmark
+locsim save office
+
+# Geocode and save a spot in one step
+locsim save cafe "Blue Bottle Coffee, San Francisco"
+
+# List all saved bookmarks
+locsim list
+# or
+locsim --bookmarks
+
+# Apply a saved bookmark
+locsim use office
+# or
+locsim -u office
+
+# Delete a bookmark
+locsim delete cafe
+```
+
+### 7. Mobile Emulator Integration
+
+#### Android ADB
+`locsim` automatically identifies online Android Virtual Devices via `adb` and broadcasts fixes:
+```bash
+# Broadcast to all connected Android emulators
+locsim "Times Square, New York" -y
+
+# Target a specific emulator instance
+locsim "Times Square, New York" --android-device emulator-5554 -y
+```
+
+#### iOS Simulator (macOS)
+On macOS, `locsim` synchronizes booted simulators via `xcrun simctl location booted set <lat> <lon>`.
+
+### 8. Pluggable Geocoder Backends
+Switch between free and commercial providers on the fly:
+```bash
+# OpenStreetMap Nominatim (default, no API key needed)
+locsim "Brandenburg Gate" --provider nominatim
+
+# Mapbox Places API
+locsim "Central Park" --provider mapbox --api-key pk.your_token
+
+# LocationIQ API
+locsim "Big Ben" --provider locationiq --api-key your_locationiq_key
+
+# OpenCage Data API
+locsim "Colosseum" --provider opencage --api-key your_opencage_key
+
+# Google Maps Geocoding API
+locsim "Taj Mahal" --provider google --api-key AIzaSy...
+```
+
+### 9. Shell Auto-Completions
+Generate high-performance autocompletion scripts:
+```bash
+# PowerShell (add to your $PROFILE)
+locsim completions powershell | Out-String | Invoke-Expression
+
+# Bash (add to ~/.bashrc)
+eval "$(locsim completions bash)"
+
+# Zsh (add to ~/.zshrc)
+eval "$(locsim completions zsh)"
+
+# Fish
+locsim completions fish | source
+```
+
+### 10. Diagnostics & Status (`--show` / `-s`)
+Inspect the active simulation state across every integration layer:
 ```bash
 locsim --show
-# or
-locsim -s
+```
+```text
+══════════════════════════════════════
+       Simulated Location Status      
+══════════════════════════════════════
+
+Status   : ACTIVE SIMULATION
+Location : Marwadi University
+Address  : Rajkot - Morbi Highway, Rajkot Taluka, Gujarat, India - 360003
+Latitude : 22.367601
+Longitude: 70.797092
+Altitude : 50.00 m
+Accuracy : 10.00 m
+Speed    : 5.50 m/s
+Heading  : 180.00°
+
+OS & Platform Integration:
+  Platform   : Windows
+  Provider   : Windows Location Provider (WinRT / Sensor Driver Overrides / DevTools)
+  Geocoder   : nominatim
+  Mechanism  : WinRT Sensor Testing Overrides & Developer State
+  Elevated   : No (Standard user)
+
+Artifacts & Exports:
+  • ~/.config/locsim/current_location.json [EXISTS]
+  • ~/.config/locsim/simulated_location.gpx [EXISTS]
+  • ~/.config/locsim/cdp_geolocation.json [EXISTS]
+  • ~/.config/locsim/locsim_env.ps1 [EXISTS]
+
+Mobile Emulator Status:
+  ADB        : Available (Android Debug Bridge version 1.0.41)
+  Emulator   : emulator-5554 [ONLINE]
 ```
 
-Outputs the active location, status of exported artifacts, and an architectural breakdown distinguishing OS, browser, and network layers.
-
-### 5. Clear Simulated Location
-
+### 11. Reset to Real Physical Location (`reset`)
+Clear all simulation overrides, restore defaults, and verify your genuine physical location using IP geolocation:
 ```bash
-locsim --clear
-# or
-locsim -c
+locsim reset
+```
+```text
+✓ Simulated location successfully cleared.
+  Reset overrides and cleaned up local mock artifacts.
+
+Detecting real physical location via IP Geolocation...
+
+══════════════════════════════════════
+       Real Physical Location (IP)    
+══════════════════════════════════════
+
+Public IP  : 203.0.113.42
+Location   : Rajkot, Gujarat, India
+Coordinates: 22.303890, 70.802160
+ISP / Org  : Reliance Jio Infocomm Ltd
+
+Device is now reporting its genuine network location.
 ```
 
-Removes simulated location from the OS provider and deletes generated mock files.
-
-### 6. Interactive Menu Mode
-
+### 12. Interactive Dashboard Menu (`-i` / `--interactive`)
+For visual terminal management:
 ```bash
-locsim --interactive
-# or
 locsim -i
 ```
-
-Presents a menu:
-
 ```text
 Location Simulator Menu:
 1. Search for a location
 2. Enter coordinates manually
 3. Show current simulated location
 4. Clear simulated location
-5. Exit
+5. Saved location bookmarks (List / Use / Save)
+6. Reset to real physical location
+7. Exit
 
-Select an option [1-5] > 
+Select an option [1-7] > 
 ```
 
 ---
 
-## Configuration & Environment Variables
+## ⚙️ Configuration & Environment Variables
 
+`locsim` supports configuration files with the following precedence:
+1. **CLI Flags** (`--provider`, `--api-key`)
+2. **Environment Variables** (`LOCSIM_PROVIDER`, `LOCSIM_API_KEY`)
+3. **Project Override** (`./.locsimrc` or `./.locsim.toml`)
+4. **Global Defaults** (`~/.config/locsim/config.toml` or `%APPDATA%\locsim\locsim\config\config.toml`)
+
+### `config.toml` Example
+```toml
+# Default geocoder provider: nominatim | locationiq | mapbox | opencage | google
+provider = "nominatim"
+
+# API Key for commercial geocoders (optional for Nominatim)
+# api_key = "pk.your_api_key_or_token"
+
+cache_enabled = true
+timeout_seconds = 10
+user_agent = "locsim/0.1.0 (https://github.com/itznan/locsim; universal-location-simulator)"
+```
+
+### Environment Variables
 | Variable | Description | Default |
-|----------|-------------|---------|
-| `LOCSIM_GEOCODER_URL` | Forward geocoding API URL | `https://nominatim.openstreetmap.org/search` |
-| `LOCSIM_REVERSE_GEOCODER_URL` | Reverse geocoding API URL | `https://nominatim.openstreetmap.org/reverse` |
-| `LOCSIM_CACHE_ENABLED` | Enable/disable local query cache (`true`/`false`) | `true` |
-| `LOCSIM_TIMEOUT` | Network request timeout in seconds | `10` |
-| `LOCSIM_DATA_DIR` | Custom directory path for configs and exports | System application directory |
+|---|---|---|
+| `LOCSIM_PROVIDER` | Geocoder backend (`nominatim`, `locationiq`, `mapbox`, `opencage`, `google`) | `nominatim` |
+| `LOCSIM_API_KEY` | API Key applied to the active provider | None |
+| `MAPBOX_ACCESS_TOKEN` | Fallback API key for Mapbox Places | None |
+| `LOCATIONIQ_API_KEY` | Fallback API key for LocationIQ | None |
+| `OPENCAGE_API_KEY` | Fallback API key for OpenCage | None |
+| `GOOGLE_MAPS_API_KEY` | Fallback API key for Google Maps | None |
+| `LOCSIM_CACHE_ENABLED` | Set to `false` or `0` to bypass local disk cache | `true` |
+| `LOCSIM_TIMEOUT` | Request timeout in seconds | `10` |
+| `LOCSIM_DATA_DIR` | Custom directory for mock artifacts and caches | OS default |
 
 ---
 
-## Location Simulation Scope & Limitations
+## 🧪 Automated Testing & CI/CD
 
-When testing location-aware applications, it is essential to understand that different technologies resolve location using different mechanisms. Changing simulated coordinates in one layer does not automatically alter all layers:
+### Browser Automation (Playwright / Puppeteer)
+`locsim` exports `cdp_geolocation.json` containing exact Chrome DevTools Protocol parameters:
 
-1. **CLI & Developer Test Suites**:
-   - `locsim` writes `current_location.json` and a shell environment script (`locsim_env.ps1` on Windows, `locsim_env.sh` on Unix).
-   - Test suites, CLI utilities, and developer scripts can read these directly to test location-dependent behavior.
+```typescript
+// Playwright test example
+import { test, expect } from '@playwright/test';
+import * as fs from 'fs';
 
+test('verify location-dependent pricing', async ({ browser }) => {
+  const cdp = JSON.parse(fs.readFileSync('.locsim/cdp_geolocation.json', 'utf-8'));
+
+  const context = await browser.newContext({
+    geolocation: { latitude: cdp.latitude, longitude: cdp.longitude, accuracy: cdp.accuracy },
+    permissions: ['geolocation'],
+  });
+
+  const page = await context.newPage();
+  await page.goto('https://example.com/checkout');
+  await expect(page.locator('#currency')).toHaveText('USD');
+});
+```
+
+### GitHub Actions Workflow Example
+```yaml
+name: Location-Dependent Tests
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install --path .
+      - name: Set Simulated Position
+        run: |
+          locsim "London, UK" -y
+          source ~/.config/locsim/locsim_env.sh
+          npm test
+```
+
+---
+
+## 📚 Deep-Dive Documentation
+
+For advanced architecture, developer integrations, and provider guides, explore the dedicated documentation suite:
+
+- 🏛️ [**Architecture & Internals**](docs/ARCHITECTURE.md) — Trait design, memory caching, telemetry validation, and platform dispatcher mechanics.
+- 🌍 [**Geocoding Providers Guide**](docs/PROVIDERS.md) — Comprehensive guide on configuring Nominatim, LocationIQ, Mapbox, OpenCage, and Google Maps.
+- 📱 [**Mobile Emulator Guide**](docs/EMULATORS.md) — Step-by-step setup for Android Virtual Devices (AVD), multi-device ADB targeting, and iOS Simulators.
+- 🧪 [**Continuous Integration Guide**](docs/CI_INTEGRATION.md) — Playwright, Puppeteer, Selenium, Python `pytest`, and GitHub Actions workflow recipes.
+- ⚙️ [**Configuration Reference**](docs/CONFIGURATION.md) — Complete TOML schema, environment variable hierarchy, and export file paths.
+
+---
+
+## 🔒 Location Simulation Scope & Limitations
+
+When testing location-aware applications, it is essential to understand that different technologies resolve location using different mechanisms:
+
+1. **CLI & Developer Test Suites**: Read `current_location.json` or source `locsim_env.ps1` / `locsim_env.sh`. Fully supported.
 2. **OS-Level Location Services**:
-   - **Windows**: `locsim` updates `HKCU\Software\Locsim`. If run as Administrator, it updates the documented Windows Sensor Platform override key (`HKLM\...\Sensor\Overrides\{BFA794E4-F964-4F53-B00F-CEDD57E4457E}`) for sensor and driver testing harnesses.
-   - **Linux**: `locsim` generates `geoclue-static.conf` for `org.freedesktop.GeoClue2` and generates NMEA-0183 (`$GPRMC`, `$GPGGA`) sentences in `gps_nmea.txt` for `gpsd`/`gpsfake`.
-   - **macOS**: `locsim` executes `xcrun simctl location booted set <lat> <lon>` for running iOS/watchOS simulators and produces GPX waypoint tracks for Xcode Instruments.
-
-3. **Browser Geolocation**:
-   - Desktop browsers (Chrome, Edge, Firefox, Brave) typically query Wi-Fi positioning services (e.g. Google Location Services) rather than hardware GPS.
-   - To mock geolocation in browsers, `locsim` exports `cdp_geolocation.json`. You can use this with Chrome DevTools (`More tools > Sensors > Location`) or automated frameworks (Playwright, Puppeteer) via `Emulation.setGeolocationOverride`.
-
-4. **IP-Based Geolocation (GeoIP)**:
-   - Websites or APIs that determine location on the server based on the incoming TCP/IP connection (e.g., MaxMind GeoIP, Cloudflare headers) see your ISP or VPN's public IP address. GPS mock tools cannot alter network routing IP geolocation.
-
-5. **Independent Native Applications**:
-   - Applications that directly access hardware GPS dongles via proprietary drivers or scan local Wi-Fi BSSIDs independently bypass simulated OS coordinates unless custom virtual sensor drivers are loaded.
+   - **Windows**: Updates `HKCU\Software\Locsim`. If run as Administrator, updates the documented Windows Sensor Platform override key (`HKLM\...\Sensor\Overrides\{BFA794E4-F964-4F53-B00F-CEDD57E4457E}`).
+   - **Linux**: Generates `geoclue-static.conf` for `org.freedesktop.GeoClue2` and NMEA-0183 (`$GPRMC`, `$GPGGA`) feeds for `gpsd`/`gpsfake`.
+   - **macOS**: Executes `xcrun simctl location booted set <lat> <lon>` for running iOS simulators.
+3. **Browser Geolocation**: Desktop browsers rely on Wi-Fi positioning services (e.g. Google Location Services). To test browsers, use the exported `cdp_geolocation.json` with Chrome DevTools Sensors or Playwright/Puppeteer.
+4. **IP-Based Geolocation (GeoIP)**: Server-side GeoIP lookups (MaxMind, Cloudflare headers) resolve the public IP of your network connection. GPS mock tools cannot alter network routing IP geolocation.
 
 ---
 
-## Running Unit Tests
+## 🛠️ Contributing & Testing
 
-Run the test suite with:
+We welcome issues, feedback, and pull requests!
 
 ```bash
-cargo test
-```
+# Clone the repository
+git clone https://github.com/itznan/locsim.git
+cd locsim
 
-All tests cover:
-- Coordinate boundary validation (-90..90, -180..180, NaN, and Infinity checks)
-- JSON serialization and deserialization
-- Geocoder caching and query normalization
-- Platform GPX XML generation and XML entity escaping
-- Chrome DevTools Protocol (CDP) payload format
-- Linux NMEA 0183 checksum and sentence formatting
-- GeoClue configuration generation
+# Run the full unit and integration test suite
+cargo test
+
+# Run linter checks
+cargo clippy --all-targets -- -D warnings
+```
 
 ---
 
-## License
+## 📄 License
 
-Dual-licensed under either of:
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
-- MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
+Dual-licensed under either:
+- **MIT License** ([LICENSE-MIT](LICENSE) or http://opensource.org/licenses/MIT)
+- **Apache License, Version 2.0** ([LICENSE-APACHE](LICENSE) or http://www.apache.org/licenses/LICENSE-2.0)
 
 at your option.
+
+---
+
+<div align="center">
+Made with ❤️ by <a href="https://github.com/itznan">itznan</a> and contributors.
+</div>
